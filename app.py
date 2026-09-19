@@ -318,6 +318,22 @@ def load_model(model_key: str):
 def update_model_defaults(model_key):
     """When user switches model, auto-populate optimal settings."""
     cfg = MODEL_CONFIGS.get(model_key, MODEL_CONFIGS[list(MODEL_CONFIGS.keys())[0]])
+    model_type = cfg.get("type", "hybrid")
+    
+    # Filter presets by model type
+    filtered_presets = ["None (Use Model Default)"]
+    for preset in STYLE_PRESETS.keys():
+        if preset == "None (Use Model Default)":
+            continue
+        # Anime models get Anime and Universal presets
+        if model_type == "anime":
+            if any(preset.startswith(e) for e in ["🌸", "🎬", "🎨", "🌆", "⚔️"]):
+                filtered_presets.append(preset)
+        # Photoreal/Standard get Photoreal and Universal presets
+        else:
+            if any(preset.startswith(e) for e in ["📸", "🎥", "👤", "🎨", "🌆", "⚔️", "📦"]):
+                filtered_presets.append(preset)
+
     return (
         cfg["default_negative"],
         cfg["default_steps"],
@@ -325,6 +341,7 @@ def update_model_defaults(model_key):
         cfg["default_width"],
         cfg["default_height"],
         cfg.get("default_scheduler", "DPM++ 2M Karras"),
+        gr.update(choices=filtered_presets, value="None (Use Model Default)")
     )
 
 
@@ -342,8 +359,12 @@ def apply_preset(preset_name, cur_prompt, model_key):
     duplication bug where clicking Apply multiple times creates garbage.
     """
     pos_add, neg_override = STYLE_PRESETS.get(preset_name, ("", ""))
-    # Append positive style tokens to existing prompt
-    new_prompt = f"{cur_prompt}, {pos_add}".strip(", ") if pos_add else cur_prompt
+    # Append positive style tokens to existing prompt without duplicating
+    cur_prompt = (cur_prompt or "").strip()
+    if pos_add and pos_add not in cur_prompt:
+        new_prompt = f"{cur_prompt}, {pos_add}".strip(", ") if cur_prompt else pos_add
+    else:
+        new_prompt = cur_prompt
     # REPLACE negative with preset's negative (or fall back to model default)
     if neg_override:
         new_neg = neg_override
@@ -621,7 +642,7 @@ with gr.Blocks(title="AI Image Studio", theme=gr.themes.Soft(), css=CSS) as demo
                     label="🎲 Seed (-1 = Random)", value=-1, precision=0
                 )
 
-            with gr.Accordion("🧩 LoRA Style Enhancer", open=False):
+            with gr.Accordion("🧩 LoRA Style Enhancer", open=True):
                 lora_select = gr.Dropdown(
                     choices=list(POPULAR_LORAS.keys()),
                     value="None",
@@ -660,6 +681,7 @@ with gr.Blocks(title="AI Image Studio", theme=gr.themes.Soft(), css=CSS) as demo
         outputs=[
             negative_prompt, steps, guidance,
             width_slider, height_slider, scheduler_select,
+            style_preset,
         ],
     )
 
