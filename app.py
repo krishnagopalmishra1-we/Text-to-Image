@@ -367,13 +367,13 @@ def update_model_defaults(model_key):
                 filtered_presets.append(preset)
 
     return (
-        cfg["default_negative"],
-        cfg["default_steps"],
-        cfg["default_guidance"],
-        cfg["default_width"],
-        cfg["default_height"],
-        cfg.get("default_scheduler", "DPM++ 2M Karras"),
-        gr.update(choices=filtered_presets, value="None (Use Model Default)")
+        gr.update(value=cfg["default_negative"]),
+        gr.update(value=cfg["default_steps"]),
+        gr.update(value=cfg["default_guidance"]),
+        gr.update(value=cfg["default_width"]),
+        gr.update(value=cfg["default_height"]),
+        gr.update(value=cfg.get("default_scheduler", "DPM++ 2M Karras")),
+        gr.update(choices=filtered_presets, value="None (Use Model Default)"),
     )
 
 
