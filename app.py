@@ -129,6 +129,30 @@ POPULAR_LORAS = {
     "None": {
         "repo": "", "weight_name": "", "trigger": "", "is_lcm": False,
     },
+    "🔥 Sensual & Body Detailer": {
+        "repo": "ntc-ai/SDXL-LoRA-slider.sexy",
+        "weight_name": "sexy.safetensors",
+        "trigger": "sexy, highly detailed, realistic skin",
+        "is_lcm": False,
+    },
+    "🌸 Anime Uncensored Detailer": {
+        "repo": "Linaqruf/anime-detailer-xl-lora",
+        "weight_name": "anime-detailer-xl.safetensors",
+        "trigger": "masterpiece, best quality, highly detailed anime",
+        "is_lcm": False,
+    },
+    "✨ Ultra Detail Enhancer": {
+        "repo": "ntc-ai/SDXL-LoRA-slider.extremely-detailed",
+        "weight_name": "extremely detailed.safetensors",
+        "trigger": "extremely detailed, high resolution",
+        "is_lcm": False,
+    },
+    "🎬 Cinematic Lighting Slider": {
+        "repo": "ntc-ai/SDXL-LoRA-slider.cinematic-lighting",
+        "weight_name": "cinematic lighting.safetensors",
+        "trigger": "cinematic lighting, dramatic atmosphere",
+        "is_lcm": False,
+    },
     "Pixel Art XL": {
         "repo": "nerijs/pixel-art-xl",
         "weight_name": "pixel-art-xl.safetensors",
