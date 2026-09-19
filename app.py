@@ -2,6 +2,9 @@ import gradio as gr
 import torch
 import time
 from diffusers import (
+    AutoPipelineForText2Image,
+    AutoPipelineForImage2Image,
+    AutoPipelineForInpainting,
     StableDiffusionXLPipeline,
     DPMSolverMultistepScheduler,
     EulerAncestralDiscreteScheduler,
@@ -9,6 +12,7 @@ from diffusers import (
     UniPCMultistepScheduler,
     LCMScheduler,
 )
+from compel import Compel, ReturnedEmbeddingsType
 import os
 import gc
 
@@ -308,12 +312,12 @@ def load_model(model_key: str):
     dtype = torch.float16 if DEVICE == "cuda" else torch.float32
 
     try:
-        pipe = StableDiffusionXLPipeline.from_pretrained(
+        pipe = AutoPipelineForText2Image.from_pretrained(
             model_id, torch_dtype=dtype, use_safetensors=True, variant="fp16"
         )
     except Exception:
         # Some repos don't publish an fp16 variant — fall back to default
-        pipe = StableDiffusionXLPipeline.from_pretrained(
+        pipe = AutoPipelineForText2Image.from_pretrained(
             model_id, torch_dtype=dtype, use_safetensors=True
         )
 
@@ -407,9 +411,10 @@ def apply_preset(preset_name, cur_prompt, model_key):
 # Core Generation
 # ---------------------------------------------------------------------------
 def generate_image(
+    generation_mode, init_image, mask_image, denoising_strength,
     model_key, prompt, negative_prompt,
     num_inference_steps, guidance_scale, width, height,
-    scheduler_name,
+    scheduler_name, use_freeu,
     lora_select, lora_custom_repo, lora_scale,
     seed,
     history,
@@ -418,7 +423,7 @@ def generate_image(
     scheduler support.  Returns (gallery, gallery_state, status_text)."""
 
     prompt_str = str(prompt or "")
-    print(f"[Generate] [{model_key}] '{prompt_str[:80]}...'")
+    print(f"[Generate] [{model_key}] [{generation_mode}] '{prompt_str[:80]}...'")
     try:
         prompt = prompt_str.strip()
         negative_prompt = (negative_prompt or "").strip()
@@ -447,6 +452,12 @@ def generate_image(
         # --- Load model --------------------------------------------------
         active_pipe = load_model(model_key)
 
+        # --- Cast Pipeline based on generation_mode -----------------------
+        if generation_mode == "Img2Img":
+            active_pipe = AutoPipelineForImage2Image.from_pipe(active_pipe)
+        elif generation_mode == "Inpainting":
+            active_pipe = AutoPipelineForInpainting.from_pipe(active_pipe)
+
         # --- Apply user-selected scheduler --------------------------------
         if scheduler_name in SCHEDULER_MAP:
             active_pipe.scheduler = SCHEDULER_MAP[scheduler_name](
@@ -454,25 +465,34 @@ def generate_image(
             )
 
         # --- Resolve LoRA -------------------------------------------------
-        lora_cfg = None
-        lora_repo = ""
-        lora_weight_name = None
+        loras_to_load = []
         is_lcm = False
+        
+        lora_selections = lora_select if isinstance(lora_select, list) else [lora_select]
+        
+        for lora_item in lora_selections:
+            if not lora_item or lora_item == "None":
+                continue
+            if lora_item == "Custom HuggingFace Repo":
+                repo = (lora_custom_repo or "").strip()
+                if not repo:
+                    return (
+                        history, history,
+                        "⚠️ Please specify a Custom HuggingFace LoRA repository name.",
+                    )
+                loras_to_load.append({"repo": repo, "weight_name": None, "name": "custom"})
+            else:
+                cfg = POPULAR_LORAS.get(lora_item, {})
+                if cfg:
+                    if cfg.get("is_lcm", False):
+                        is_lcm = True
+                    loras_to_load.append({
+                        "repo": cfg.get("repo", ""),
+                        "weight_name": cfg.get("weight_name", "") or None,
+                        "name": lora_item
+                    })
 
-        if lora_select == "Custom HuggingFace Repo":
-            lora_repo = (lora_custom_repo or "").strip()
-            if not lora_repo:
-                return (
-                    history, history,
-                    "⚠️ Please specify a Custom HuggingFace LoRA repository name.",
-                )
-        elif lora_select and lora_select != "None":
-            lora_cfg = POPULAR_LORAS.get(lora_select, {})
-            lora_repo = lora_cfg.get("repo", "")
-            lora_weight_name = lora_cfg.get("weight_name", "") or None
-            is_lcm = lora_cfg.get("is_lcm", False)
-
-        lora_loaded = False
+        lora_loaded = len(loras_to_load) > 0
 
         # --- Seed ---------------------------------------------------------
         seed_val = int(seed)
@@ -491,16 +511,21 @@ def generate_image(
             except Exception:
                 pass
 
-            if lora_repo:
-                print(f"[LoRA] Loading: {lora_repo}")
-                if lora_weight_name:
-                    active_pipe.load_lora_weights(
-                        lora_repo, weight_name=lora_weight_name
-                    )
-                else:
-                    active_pipe.load_lora_weights(lora_repo)
-                lora_loaded = True
-                print(f"[LoRA] Loaded: {lora_repo}")
+            if lora_loaded:
+                loaded_names = []
+                for linfo in loras_to_load:
+                    print(f"[LoRA] Loading: {linfo['repo']} as {linfo['name']}")
+                    if linfo['weight_name']:
+                        active_pipe.load_lora_weights(
+                            linfo['repo'], weight_name=linfo['weight_name'], adapter_name=linfo['name']
+                        )
+                    else:
+                        active_pipe.load_lora_weights(
+                            linfo['repo'], adapter_name=linfo['name']
+                        )
+                    loaded_names.append(linfo['name'])
+                active_pipe.set_adapters(loaded_names)
+                print(f"[LoRA] Set adapters: {loaded_names}")
 
             # LCM Accelerator LoRA overrides: scheduler, steps, and guidance
             if is_lcm and lora_loaded:
@@ -514,15 +539,44 @@ def generate_image(
                     f"guidance={actual_guidance}, scheduler=LCMScheduler"
                 )
 
+            if use_freeu:
+                print("[FreeU] Enabling FreeU")
+                active_pipe.enable_freeu(s1=0.9, s2=0.2, b1=1.2, b2=1.4)
+
+            # Compel prompt weighting
+            compel = Compel(
+                tokenizer=[active_pipe.tokenizer, active_pipe.tokenizer_2], 
+                text_encoder=[active_pipe.text_encoder, active_pipe.text_encoder_2], 
+                returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED, 
+                requires_pooled=[False, True]
+            )
+            prompt_embeds, pooled_prompt_embeds = compel(prompt)
+            negative_prompt_embeds, negative_pooled_prompt_embeds = compel(negative_prompt)
+
             gen_kwargs = dict(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
                 num_inference_steps=actual_steps,
                 guidance_scale=actual_guidance,
-                width=width,
-                height=height,
                 generator=generator,
             )
+
+            if generation_mode == "Text2Img":
+                gen_kwargs["width"] = width
+                gen_kwargs["height"] = height
+            elif generation_mode == "Img2Img":
+                if init_image is None:
+                    return history, history, "⚠️ Init image is required for Img2Img."
+                gen_kwargs["image"] = init_image
+                gen_kwargs["strength"] = denoising_strength
+            elif generation_mode == "Inpainting":
+                if init_image is None or mask_image is None:
+                    return history, history, "⚠️ Init image and mask are required for Inpainting."
+                gen_kwargs["image"] = init_image
+                gen_kwargs["mask_image"] = mask_image
+                gen_kwargs["strength"] = denoising_strength
             # Apply LoRA weight scale (not needed for LCM which runs at full weight)
             if lora_loaded and not is_lcm:
                 gen_kwargs["cross_attention_kwargs"] = {"scale": float(lora_scale)}
@@ -534,6 +588,11 @@ def generate_image(
             elapsed = time.time() - t0
 
         finally:
+            if use_freeu:
+                try:
+                    active_pipe.disable_freeu()
+                except Exception:
+                    pass
             # --- Cleanup LoRA ALWAYS (even on error/cancellation) --------------
             if lora_loaded:
                 try:
@@ -548,8 +607,11 @@ def generate_image(
 
         # --- Build status message -----------------------------------------
         parts = [f"✅ {model_key}"]
+        if use_freeu:
+            parts.append("FreeU")
         if lora_loaded:
-            parts.append(f"LoRA: {lora_select}")
+            lora_names_str = ", ".join(lora_selections) if isinstance(lora_selections, list) else str(lora_select)
+            parts.append(f"LoRAs: {lora_names_str}")
         if is_lcm and lora_loaded:
             parts.append(f"LCM: steps={actual_steps} cfg={actual_guidance}")
         parts.append(f"Seed: {seed_val}")
@@ -558,7 +620,19 @@ def generate_image(
         status = " | ".join(parts)
 
         # --- Update gallery -----------------------------------------------
-        caption = f"Seed:{seed_val} | {elapsed:.1f}s | {model_key.split('(')[0].strip()}"
+        caption_parts = [
+            f"Mode: {generation_mode}",
+            f"Model: {model_key.split('(')[0].strip()}",
+            f"Seed: {seed_val}",
+            f"Time: {elapsed:.1f}s"
+        ]
+        if lora_loaded:
+            lora_names_str = ", ".join(lora_selections) if isinstance(lora_selections, list) else str(lora_select)
+            caption_parts.append(f"LoRAs: {lora_names_str}")
+        if use_freeu:
+            caption_parts.append("FreeU: On")
+        
+        caption = " | ".join(caption_parts)
         updated_history = history + [(result.images[0], caption)]
 
         return updated_history, updated_history, status
@@ -583,14 +657,84 @@ def generate_image(
 # UI Construction
 # ---------------------------------------------------------------------------
 CSS = """
-.gradio-container { max-width: 1400px !important; margin: auto; }
-#gen-btn { font-size: 1.15em; font-weight: 600; }
+/* App background and fonts */
+.gradio-container { 
+    max-width: 1400px !important; 
+    margin: auto; 
+    font-family: 'Inter', sans-serif;
+}
+
+/* Glassmorphism containers */
+.gr-box, .gr-panel, .gr-block { 
+    background: rgba(255, 255, 255, 0.05) !important; 
+    backdrop-filter: blur(10px); 
+    border: 1px solid rgba(255, 255, 255, 0.1) !important; 
+    border-radius: 16px !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1);
+}
+
+/* Button styling */
+#gen-btn { 
+    font-size: 1.15em; 
+    font-weight: 700; 
+    background: linear-gradient(135deg, #6366f1, #3b82f6) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 12px !important;
+    transition: all 0.3s ease !important;
+}
+
+#gen-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px -10px rgba(99, 102, 241, 0.8) !important;
+}
+
+button.primary {
+    border-radius: 8px !important;
+}
+
+/* Input fields */
+input, textarea, select {
+    border-radius: 8px !important;
+    transition: all 0.2s ease;
+}
+
+input:focus, textarea:focus, select:focus {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+}
+
+/* Gallery and Image styling */
+.gr-gallery {
+    border-radius: 16px !important;
+    overflow: hidden;
+}
+
+/* Tabs styling */
+.tab-nav {
+    border-bottom: none !important;
+    background: rgba(0, 0, 0, 0.05) !important;
+    border-radius: 12px 12px 0 0 !important;
+    padding: 8px 8px 0 8px !important;
+}
+
+.tab-nav button {
+    border-radius: 8px 8px 0 0 !important;
+    border: none !important;
+    margin-right: 4px !important;
+    transition: background 0.2s !important;
+}
+
+.tab-nav button.selected {
+    background: #6366f1 !important;
+    color: white !important;
+}
 """
 
 default_model = list(MODEL_CONFIGS.keys())[0]
 default_cfg = MODEL_CONFIGS[default_model]
 
-with gr.Blocks(title="AI Image Studio", theme=gr.themes.Soft(), css=CSS) as demo:
+with gr.Blocks(title="AI Image Studio", theme=gr.themes.Slate(primary_hue="indigo", secondary_hue="blue"), css=CSS) as demo:
     gr.Markdown("# 🎨 AI Image Studio")
     gr.Markdown(
         "Multi-model SDXL · Auto-Optimized Settings · Seed Control · "
@@ -598,6 +742,25 @@ with gr.Blocks(title="AI Image Studio", theme=gr.themes.Soft(), css=CSS) as demo
     )
 
     gallery_state = gr.State([])
+
+    def on_generate_wrapper(
+        mode, i2i_img, i2i_denoise, inpaint_img, inpaint_mask, inpaint_denoise,
+        *args
+    ):
+        if mode == "Img2Img":
+            init_img = i2i_img
+            mask_img = None
+            denoise = i2i_denoise
+        elif mode == "Inpainting":
+            init_img = inpaint_img
+            mask_img = inpaint_mask
+            denoise = inpaint_denoise
+        else:
+            init_img = None
+            mask_img = None
+            denoise = 0.0
+            
+        return generate_image(mode, init_img, mask_img, denoise, *args)
 
     with gr.Row():
         # ---- Left panel ---------------------------------------------------
@@ -607,6 +770,22 @@ with gr.Blocks(title="AI Image Studio", theme=gr.themes.Soft(), css=CSS) as demo
                 value=default_model,
                 label="🤖 Model",
             )
+
+            with gr.Tabs() as mode_tabs:
+                with gr.TabItem("Text2Img", id="Text2Img") as tab_t2i:
+                    pass
+                with gr.TabItem("Img2Img", id="Img2Img") as tab_i2i:
+                    init_image_i2i = gr.Image(type="pil", label="Initial Image")
+                    denoise_i2i = gr.Slider(minimum=0.0, maximum=1.0, value=0.75, step=0.05, label="Denoising Strength")
+                with gr.TabItem("Inpainting", id="Inpainting") as tab_inpaint:
+                    init_image_inpaint = gr.Image(type="pil", label="Image to Inpaint")
+                    mask_image_inpaint = gr.Image(type="pil", label="Mask Image")
+                    denoise_inpaint = gr.Slider(minimum=0.0, maximum=1.0, value=0.75, step=0.05, label="Denoising Strength")
+
+            generation_mode = gr.State("Text2Img")
+            tab_t2i.select(lambda: "Text2Img", outputs=generation_mode)
+            tab_i2i.select(lambda: "Img2Img", outputs=generation_mode)
+            tab_inpaint.select(lambda: "Inpainting", outputs=generation_mode)
 
             prompt = gr.Textbox(
                 label="✏️ Prompt",
@@ -664,6 +843,9 @@ with gr.Blocks(title="AI Image Studio", theme=gr.themes.Soft(), css=CSS) as demo
                         label="🔄 Scheduler",
                         scale=2,
                     )
+                    use_freeu_checkbox = gr.Checkbox(
+                        label="🌟 Enable FreeU", value=False, scale=1
+                    )
                 with gr.Row():
                     width_slider = gr.Slider(
                         label="Width",
@@ -686,8 +868,9 @@ with gr.Blocks(title="AI Image Studio", theme=gr.themes.Soft(), css=CSS) as demo
             with gr.Accordion("🧩 LoRA Style Enhancer", open=True):
                 lora_select = gr.Dropdown(
                     choices=list(POPULAR_LORAS.keys()),
-                    value="None",
-                    label="Select LoRA",
+                    value=[],
+                    multiselect=True,
+                    label="Select LoRA(s)",
                 )
                 lora_custom_repo = gr.Textbox(
                     label="Custom HuggingFace LoRA Repo",
@@ -739,11 +922,14 @@ with gr.Blocks(title="AI Image Studio", theme=gr.themes.Soft(), css=CSS) as demo
     )
 
     generate_btn.click(
-        fn=generate_image,
+        fn=on_generate_wrapper,
         inputs=[
+            generation_mode,
+            init_image_i2i, denoise_i2i,
+            init_image_inpaint, mask_image_inpaint, denoise_inpaint,
             model_selector, prompt, negative_prompt,
             steps, guidance, width_slider, height_slider,
-            scheduler_select,
+            scheduler_select, use_freeu_checkbox,
             lora_select, lora_custom_repo, lora_scale,
             seed_input,
             gallery_state,
