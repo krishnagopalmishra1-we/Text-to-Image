@@ -268,6 +268,11 @@ def load_model(model_key: str):
     # Unload previous model to free VRAM
     if pipe is not None:
         print(f"[Pipeline] Unloading {current_model_key}...")
+        try:
+            if hasattr(pipe, "unload_lora_weights"):
+                pipe.unload_lora_weights()
+        except Exception:
+            pass
         del pipe
         pipe = None
         if torch.cuda.is_available():
@@ -431,6 +436,11 @@ def generate_image(
 
         if lora_select == "Custom HuggingFace Repo":
             lora_repo = (lora_custom_repo or "").strip()
+            if not lora_repo:
+                return (
+                    history, history,
+                    "⚠️ Please specify a Custom HuggingFace LoRA repository name.",
+                )
         elif lora_select and lora_select != "None":
             lora_cfg = POPULAR_LORAS.get(lora_select, {})
             lora_repo = lora_cfg.get("repo", "")
@@ -438,19 +448,6 @@ def generate_image(
             is_lcm = lora_cfg.get("is_lcm", False)
 
         lora_loaded = False
-        if lora_repo:
-            try:
-                print(f"[LoRA] Loading: {lora_repo}")
-                if lora_weight_name:
-                    active_pipe.load_lora_weights(
-                        lora_repo, weight_name=lora_weight_name
-                    )
-                else:
-                    active_pipe.load_lora_weights(lora_repo)
-                lora_loaded = True
-                print(f"[LoRA] Loaded: {lora_repo}")
-            except Exception as lora_err:
-                print(f"[LoRA] Failed (skipping): {lora_err}")
 
         # --- Seed ---------------------------------------------------------
         seed_val = int(seed)
@@ -462,48 +459,67 @@ def generate_image(
         actual_steps = int(num_inference_steps)
         actual_guidance = float(guidance_scale)
 
-        # LCM Accelerator LoRA overrides: scheduler, steps, and guidance
-        if is_lcm and lora_loaded:
-            active_pipe.scheduler = LCMScheduler.from_config(
-                original_scheduler_config
-            )
-            actual_steps = min(actual_steps, 8)
-            actual_guidance = 1.5
-            print(
-                f"[LCM] Auto-override: steps={actual_steps}, "
-                f"guidance={actual_guidance}, scheduler=LCMScheduler"
-            )
-
-        gen_kwargs = dict(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            num_inference_steps=actual_steps,
-            guidance_scale=actual_guidance,
-            width=width,
-            height=height,
-            generator=generator,
-        )
-        # Apply LoRA weight scale (not needed for LCM which runs at full weight)
-        if lora_loaded and not is_lcm:
-            gen_kwargs["cross_attention_kwargs"] = {"scale": float(lora_scale)}
-
-        # --- Generate -----------------------------------------------------
-        t0 = time.time()
-        with torch.inference_mode():
-            result = active_pipe(**gen_kwargs)
-        elapsed = time.time() - t0
-
-        # --- Cleanup LoRA -------------------------------------------------
-        if lora_loaded:
+        try:
+            # Purge any lingering LoRAs from previous runs before loading
             try:
                 active_pipe.unload_lora_weights()
             except Exception:
                 pass
-            # Restore user's scheduler after LCM override
-            if is_lcm and scheduler_name in SCHEDULER_MAP:
-                active_pipe.scheduler = SCHEDULER_MAP[scheduler_name](
+
+            if lora_repo:
+                print(f"[LoRA] Loading: {lora_repo}")
+                if lora_weight_name:
+                    active_pipe.load_lora_weights(
+                        lora_repo, weight_name=lora_weight_name
+                    )
+                else:
+                    active_pipe.load_lora_weights(lora_repo)
+                lora_loaded = True
+                print(f"[LoRA] Loaded: {lora_repo}")
+
+            # LCM Accelerator LoRA overrides: scheduler, steps, and guidance
+            if is_lcm and lora_loaded:
+                active_pipe.scheduler = LCMScheduler.from_config(
                     original_scheduler_config
                 )
+                actual_steps = min(actual_steps, 8)
+                actual_guidance = 1.5
+                print(
+                    f"[LCM] Auto-override: steps={actual_steps}, "
+                    f"guidance={actual_guidance}, scheduler=LCMScheduler"
+                )
+
+            gen_kwargs = dict(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                num_inference_steps=actual_steps,
+                guidance_scale=actual_guidance,
+                width=width,
+                height=height,
+                generator=generator,
+            )
+            # Apply LoRA weight scale (not needed for LCM which runs at full weight)
+            if lora_loaded and not is_lcm:
+                gen_kwargs["cross_attention_kwargs"] = {"scale": float(lora_scale)}
+
+            # --- Generate -----------------------------------------------------
+            t0 = time.time()
+            with torch.inference_mode():
+                result = active_pipe(**gen_kwargs)
+            elapsed = time.time() - t0
+
+        finally:
+            # --- Cleanup LoRA ALWAYS (even on error/cancellation) --------------
+            if lora_loaded:
+                try:
+                    active_pipe.unload_lora_weights()
+                except Exception:
+                    pass
+                # Restore user's scheduler after LCM override
+                if is_lcm and scheduler_name in SCHEDULER_MAP:
+                    active_pipe.scheduler = SCHEDULER_MAP[scheduler_name](
+                        original_scheduler_config
+                    )
 
         # --- Build status message -----------------------------------------
         parts = [f"✅ {model_key}"]
