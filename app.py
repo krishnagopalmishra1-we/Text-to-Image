@@ -321,9 +321,8 @@ def load_model(model_key: str):
             model_id, torch_dtype=dtype, use_safetensors=True
         )
 
-    pipe = pipe.to(DEVICE)
-
     if DEVICE == "cuda":
+        pipe.enable_model_cpu_offload()
         # vae_slicing: zero-cost safety for potential batch decode
         if hasattr(pipe, "enable_vae_slicing"):
             pipe.enable_vae_slicing()
@@ -569,13 +568,13 @@ def generate_image(
             elif generation_mode == "Img2Img":
                 if init_image is None:
                     return history, history, "⚠️ Init image is required for Img2Img."
-                gen_kwargs["image"] = init_image
+                gen_kwargs["image"] = init_image.resize((width, height))
                 gen_kwargs["strength"] = denoising_strength
             elif generation_mode == "Inpainting":
                 if init_image is None or mask_image is None:
                     return history, history, "⚠️ Init image and mask are required for Inpainting."
-                gen_kwargs["image"] = init_image
-                gen_kwargs["mask_image"] = mask_image
+                gen_kwargs["image"] = init_image.resize((width, height))
+                gen_kwargs["mask_image"] = mask_image.resize((width, height))
                 gen_kwargs["strength"] = denoising_strength
             # Apply LoRA weight scale (not needed for LCM which runs at full weight)
             if lora_loaded and not is_lcm:
