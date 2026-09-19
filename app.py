@@ -16,8 +16,11 @@ MAX_PROMPT_CHARS = 1200
 # Model registry — all SDXL, no token required
 # ---------------------------------------------------------------------------
 MODELS = {
+    "Juggernaut XL V9  (Cinematic / Photoreal)": "RunDiffusion/Juggernaut-XL-v9",
     "RealVisXL V4  (Best Realism)": "SG161222/RealVisXL_V4.0",
-    "DreamShaper XL Turbo  (Fast / Artistic)": "Lykon/dreamshaper-xl-v2-turbo",
+    "Fluently XL V4  (Uncensored Photoreal & Art)": "fluently/Fluently-XL-v4",
+    "Animagine XL 3.1  (Uncensored Anime / 2D)": "cagliostrolab/animagine-xl-3.1",
+    "DreamShaper XL Turbo  (Fast 4-Step)": "Lykon/dreamshaper-xl-v2-turbo",
     "SDXL Base 1.0  (Standard)": "stabilityai/stable-diffusion-xl-base-1.0",
 }
 
