@@ -734,7 +734,7 @@ input:focus, textarea:focus, select:focus {
 default_model = list(MODEL_CONFIGS.keys())[0]
 default_cfg = MODEL_CONFIGS[default_model]
 
-with gr.Blocks(title="AI Image Studio", theme=gr.themes.Slate(primary_hue="indigo", secondary_hue="blue"), css=CSS) as demo:
+with gr.Blocks(title="AI Image Studio", theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="blue"), css=CSS) as demo:
     gr.Markdown("# 🎨 AI Image Studio")
     gr.Markdown(
         "Multi-model SDXL · Auto-Optimized Settings · Seed Control · "
