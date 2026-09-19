@@ -29,11 +29,23 @@ MODELS = {
 # ---------------------------------------------------------------------------
 STYLE_PRESETS = {
     "None": ("", ""),
-    "Photorealistic": (
+    "Anime Masterpiece (for Animagine)": (
+        "masterpiece, best quality, highly detailed, anime style, vibrant colors, crisp lines",
+        "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, photo, 3d render",
+    ),
+    "Anime Cinematic (Makoto Shinkai)": (
+        "masterpiece, anime aesthetic, dramatic lighting, cinematic composition, Makoto Shinkai style, breathtaking background, 8k",
+        "photorealistic, real photo, 3d render, low quality, blurry, noise, watermark",
+    ),
+    "Digital Illustration (2D Concept)": (
+        "masterpiece, digital painting, fine art illustration, smooth shading, concept art, pixiv, highly detailed",
+        "photo, 3d render, low quality, blurry, watermark",
+    ),
+    "Photorealistic (for Juggernaut/RealVis)": (
         "RAW photo, photorealistic, 8k uhd, DSLR, soft lighting, high quality, film grain, Fujifilm XT3",
         "drawing, painting, cartoon, anime, 3d render, illustration, text, logo, watermark, low quality",
     ),
-    "Cinematic": (
+    "Cinematic Photo": (
         "cinematic photo, dramatic lighting, film still, anamorphic lens, shallow depth of field, 4k, movie quality",
         "amateur, flat lighting, low resolution, blurry, noise, watermark",
     ),
