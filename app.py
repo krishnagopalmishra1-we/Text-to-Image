@@ -12,7 +12,6 @@ from diffusers import (
     UniPCMultistepScheduler,
     LCMScheduler,
 )
-from compel import Compel, ReturnedEmbeddingsType
 import os
 import gc
 
@@ -542,21 +541,9 @@ def generate_image(
                 print("[FreeU] Enabling FreeU")
                 active_pipe.enable_freeu(s1=0.9, s2=0.2, b1=1.2, b2=1.4)
 
-            # Compel prompt weighting
-            compel = Compel(
-                tokenizer=[active_pipe.tokenizer, active_pipe.tokenizer_2], 
-                text_encoder=[active_pipe.text_encoder, active_pipe.text_encoder_2], 
-                returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED, 
-                requires_pooled=[False, True]
-            )
-            prompt_embeds, pooled_prompt_embeds = compel(prompt)
-            negative_prompt_embeds, negative_pooled_prompt_embeds = compel(negative_prompt)
-
             gen_kwargs = dict(
-                prompt_embeds=prompt_embeds,
-                pooled_prompt_embeds=pooled_prompt_embeds,
-                negative_prompt_embeds=negative_prompt_embeds,
-                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
                 num_inference_steps=actual_steps,
                 guidance_scale=actual_guidance,
                 generator=generator,
