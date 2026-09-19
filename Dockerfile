@@ -1,5 +1,5 @@
 # Use PyTorch with CUDA support for GPU inference
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
 
 # Set the working directory to /app
 WORKDIR /app
@@ -23,7 +23,6 @@ EXPOSE 7860
 ENV PORT=7860
 ENV GRADIO_SERVER_NAME=0.0.0.0
 ENV GRADIO_SHARE=false
-ENV LORA_ALLOW_REMOTE=false
 ENV HF_HOME=/tmp/hf-cache
 ENV TRANSFORMERS_CACHE=/tmp/hf-cache
 
