@@ -417,9 +417,10 @@ def generate_image(
     """Generate an image with full error handling, seed control, LoRA, and
     scheduler support.  Returns (gallery, gallery_state, status_text)."""
 
-    print(f"[Generate] [{model_key}] '{prompt[:80]}...'")
+    prompt_str = str(prompt or "")
+    print(f"[Generate] [{model_key}] '{prompt_str[:80]}...'")
     try:
-        prompt = (prompt or "").strip()
+        prompt = prompt_str.strip()
         negative_prompt = (negative_prompt or "").strip()
 
         if not prompt:
